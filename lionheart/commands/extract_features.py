@@ -562,8 +562,7 @@ def main(args):
                         gc_correction_bin_edges_path=paths[
                             "gc_correction_bin_edges_path"
                         ],
-                        insert_size_correction_bin_edges_path=paths[
-                        ],
+                     #   insert_size_correction_bin_edges_path=paths[],
                         exclude_paths=[
                             paths["exclude_outlier_indices"],
                             paths["exclude_zero_indices"],
