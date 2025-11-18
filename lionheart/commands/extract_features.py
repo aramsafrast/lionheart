@@ -487,7 +487,7 @@ def main(args):
         # Calculate whether to parallelize and how many threads to use
         # per mosdepth call (pref. 4 threads + 1 additional core)
         mosdepth_threads = 4 if args.n_jobs >= 10 else int((args.n_jobs - 2) / 2)
-        max_workers = 1 if mosdepth_threads < 2 else 2
+        max_workers = 1 
         if max_workers == 1:
             messenger(
                 "`--n_jobs < 6`: Not enough cores to run the two mosdepth calls in parallel. "
@@ -531,7 +531,7 @@ def main(args):
                     "clean_intermediates": not args.keep_intermediates,
                     "messenger": messenger,
                 }
-                for coverage_type in ["coverage", "insert_sizes"]
+                for coverage_type in ["coverage"]
             ]
             run_parallel_tasks(
                 task_list=mosdepth_kwargs,
@@ -555,16 +555,12 @@ def main(args):
                 with messenger.indentation(add_indent=8):
                     create_dataset_for_inference(
                         chrom_coverage_paths=coverage_by_chrom_paths,
-                        chrom_insert_size_paths=insert_sizes_by_chrom_paths,
                         cell_type_paths=mask_to_cell_type_mask_dirs[mask_type],
                         output_paths=output_path_collections[mask_type],
                         bins_info_dir_path=paths["bins_by_chromosome_dir"],
                         cell_type_to_idx=mask_to_cell_type_to_idx[mask_type],
                         gc_correction_bin_edges_path=paths[
                             "gc_correction_bin_edges_path"
-                        ],
-                        insert_size_correction_bin_edges_path=paths[
-                            "insert_size_correction_bin_edges_path"
                         ],
                         exclude_paths=[
                             paths["exclude_outlier_indices"],
