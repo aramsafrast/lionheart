@@ -217,13 +217,11 @@ def _update_r_calculator(
 
 def create_dataset_for_inference(
     chrom_coverage_paths: Dict[str, pathlib.Path],
-    chrom_insert_size_paths: Dict[str, pathlib.Path],
     cell_type_paths: Dict[str, pathlib.Path],
     output_paths: DatasetOutputPaths,
     bins_info_dir_path: pathlib.Path,
     cell_type_to_idx: pd.DataFrame,
     gc_correction_bin_edges_path: pathlib.Path,
-    insert_size_correction_bin_edges_path: pathlib.Path,
     exclude_paths: List[pathlib.Path],
     n_jobs: int = 1,
     messenger: Optional[Callable] = Messenger(verbose=False, indent=0, msg_fn=print),
@@ -267,15 +265,6 @@ def create_dataset_for_inference(
         ).astype(np.float64)
     except:
         messenger("Failed to load GC correction bin edges.")
-        raise
-
-    messenger("Loading insert size bin edges")
-    try:
-        insert_size_correction_bin_edges = np.load(
-            insert_size_correction_bin_edges_path, allow_pickle=True
-        ).astype(np.float64)
-    except:
-        messenger("Failed to load insert size correction bin edges.")
         raise
 
     exclude_bins_by_chrom = {}
@@ -338,12 +327,6 @@ def create_dataset_for_inference(
 
     megabin_offset_combination_averages_collection = {}
     gc_correction_factors_collection = {}
-    insert_size_noise_correction_factors_collection = {}
-    insert_size_skewness_correction_factors_collection = {}
-    insert_size_mean_correction_factors_collection = {}
-    insert_size_observed_bias_collection = {}
-    insert_size_target_bias_collection = {}
-    insert_size_optimal_params_collection = {}
 
     with timer.time_step(indent=4, name_prefix="load_and_add"):
         for chrom in chroms_ordered:
@@ -390,40 +373,6 @@ def create_dataset_for_inference(
                 # Save the non-corrected raw integer counts
                 # Needed when calculating insert size correction model
                 sample_cov_raw_counts = sample_cov.copy()
-
-                # Load insert sizes
-                sample_insert_sizes = None
-                if chrom_insert_size_paths is not None:
-                    messenger("Loading and averaging insert sizes")
-                    with timer.time_step(
-                        indent=4,
-                        name_prefix=f"load_insert_sizes_{chrom}",
-                    ):
-                        sample_insert_sizes = _load_from_sparse_array(
-                            chrom_insert_size_paths[chrom],
-                            indices=include_indices,
-                            # For 10bp bins sum of average position-overlap sizes,
-                            # rounding to 1 decimals should cover the real values
-                            decimals=1,
-                        )
-
-                        # Convert from sums to means
-                        # They should have the same non-zero bins
-                        sample_insert_sizes[sample_cov > 0] /= sample_cov[
-                            sample_cov > 0
-                        ]
-
-                        # Extra check to avoid rounding errors affecting bin-assigment
-                        # Allow extra precision so only removing rounding errors
-                        sample_insert_sizes = np.round(sample_insert_sizes, decimals=7)
-
-                        messenger(
-                            "Non-zero bin statistics: "
-                            f"min={np.round(sample_insert_sizes[sample_insert_sizes > 0].min(), decimals=3)}, "
-                            f"max={np.round(sample_insert_sizes.max(), decimals=3)}, "
-                            f"mean={np.round(sample_insert_sizes[sample_insert_sizes > 0].mean(), decimals=3)}",
-                            add_indent=4,
-                        )
 
                 # Load consensus overlap mask separately
                 messenger("Loading consensus site overlaps")
@@ -520,114 +469,6 @@ def create_dataset_for_inference(
 
                 # Free up memory
                 del sample_gc
-
-                # Calculate and apply average overlapping insert size
-                # correction factor for current chromosome
-                with timer.time_step(indent=4):
-                    # Init collection for correction factors
-                    insert_size_noise_correction_factors_collection[chrom] = {}
-                    insert_size_skewness_correction_factors_collection[chrom] = {}
-                    insert_size_mean_correction_factors_collection[chrom] = {}
-                    insert_size_observed_bias_collection[chrom] = {}
-                    insert_size_target_bias_collection[chrom] = {}
-                    insert_size_optimal_params_collection[chrom] = {}
-
-                    # Chromosome level correction factor
-                    messenger("Average overlapping insert size corrections")
-                    messenger(
-                        "Calculating insert size correction factors for chromosome "
-                        f"({len(sample_insert_sizes)} bins) ",
-                        add_indent=4,
-                    )
-                    insert_size_out = calculate_insert_size_correction_factors(
-                        coverages=(
-                            # Use non-corrected coverages for central limit theorem effect estimation
-                            sample_cov_raw_counts
-                        ),
-                        insert_sizes=sample_insert_sizes,
-                        bin_edges=insert_size_correction_bin_edges,
-                        base_sigma=8.026649608460776,  # `std / sqrt(depth)` for a handful of DELFI Cristiano samples - currently hardcoded
-                        df=5,
-                        nan_extremes=True,
-                    )
-
-                    # Add the correction factors and bias to collections
-                    insert_size_noise_correction_factors_collection[chrom][
-                        "chromosome"
-                    ] = insert_size_out["noise_correction_factor"]
-                    insert_size_skewness_correction_factors_collection[chrom][
-                        "chromosome"
-                    ] = insert_size_out["skewness_correction_factor"]
-                    insert_size_mean_correction_factors_collection[chrom][
-                        "chromosome"
-                    ] = insert_size_out["mean_correction_factor"]
-                    insert_size_observed_bias_collection[chrom]["chromosome"] = (
-                        insert_size_out["observed_bias"]
-                    )
-                    insert_size_target_bias_collection[chrom]["chromosome"] = (
-                        insert_size_out["target_bias"]
-                    )
-                    insert_size_optimal_params_collection[chrom]["chromosome"] = (
-                        insert_size_out["optimal_fit_params"]
-                    )
-                    insert_size_bin_midpoints = insert_size_out["bin_midpoints"]
-
-                    # Add statistics to optimal settings dict for later
-                    # modeling/plotting purposes
-                    insert_size_optimal_params_collection[chrom]["chromosome"][
-                        "statistic__mean_non_zero_coverage"
-                    ] = np.nanmean(sample_cov[sample_insert_sizes > 0])
-                    insert_size_optimal_params_collection[chrom]["chromosome"][
-                        "statistic__std_non_zero_coverage"
-                    ] = np.nanstd(sample_cov[sample_insert_sizes > 0])
-                    insert_size_optimal_params_collection[chrom]["chromosome"][
-                        "statistic__mean_non_zero_insert_size"
-                    ] = np.nanmean(sample_insert_sizes[sample_insert_sizes > 0])
-                    insert_size_optimal_params_collection[chrom]["chromosome"][
-                        "statistic__std_non_zero_insert_size"
-                    ] = np.nanstd(sample_insert_sizes[sample_insert_sizes > 0])
-
-                    # Apply chromosome-level insert size correction to entire chromosome
-                    messenger(
-                        "Reducing insert size bias with chromosome-level noise, "
-                        "skewness and mean-shift correction factors",
-                        add_indent=4,
-                    )
-
-                    # Correct the noise
-                    sample_cov[sample_insert_sizes > 0] = correct_bias(
-                        coverages=sample_cov[sample_insert_sizes > 0],
-                        correct_factors=insert_size_noise_correction_factors_collection[
-                            chrom
-                        ]["chromosome"],
-                        bias_scores=sample_insert_sizes[sample_insert_sizes > 0],
-                        bin_edges=insert_size_correction_bin_edges,
-                    )
-
-                    # Correct the skewness
-                    sample_cov[sample_insert_sizes > 0] = correct_bias(
-                        coverages=sample_cov[sample_insert_sizes > 0],
-                        correct_factors=insert_size_skewness_correction_factors_collection[
-                            chrom
-                        ]["chromosome"],
-                        bias_scores=sample_insert_sizes[sample_insert_sizes > 0],
-                        bin_edges=insert_size_correction_bin_edges,
-                    )
-
-                    # Correct the mean shift
-                    sample_cov[sample_insert_sizes > 0] = correct_bias(
-                        coverages=sample_cov[sample_insert_sizes > 0],
-                        correct_factors=insert_size_mean_correction_factors_collection[
-                            chrom
-                        ]["chromosome"],
-                        bias_scores=sample_insert_sizes[sample_insert_sizes > 0],
-                        bin_edges=insert_size_correction_bin_edges,
-                    )
-
-                    messenger(
-                        f"NaNs after correction: {np.isnan(sample_cov).sum()}",
-                        indent=8,
-                    )
 
                 # Free up memory
                 del sample_cov_raw_counts
@@ -817,82 +658,6 @@ def create_dataset_for_inference(
     )
     if output_paths.gc_factor_ids is not None:
         gc_factor_ids.to_csv(output_paths.gc_factor_ids, index=False)
-
-    # Write insert size correction files
-
-    # Identifiers for indexing correction factors arrays
-    insert_size_factor_ids = pd.DataFrame(
-        [
-            (chrom, band)
-            for chrom in chroms_ordered
-            for band in sorted(
-                insert_size_noise_correction_factors_collection[chrom].keys()
-            )
-        ],
-        columns=["chromosome", "band"],
-    )
-    if output_paths.insert_size_factor_ids is not None:
-        insert_size_factor_ids.to_csv(output_paths.insert_size_factor_ids, index=False)
-
-    if output_paths.insert_size_bin_midpoints is not None:
-        np.save(output_paths.insert_size_bin_midpoints, insert_size_bin_midpoints)
-
-    # Save optimal fitting parameters from insert size correction
-
-    if output_paths.insert_size_optimal_params is not None:
-
-        def identify_params_dicts(d, chrom, band):
-            d["chromosome"] = chrom
-            d["band"] = band
-            return d
-
-        pd.DataFrame(
-            [
-                identify_params_dicts(
-                    insert_size_optimal_params_collection[chrom][band], chrom, band
-                )
-                for chrom in chroms_ordered
-                for band in sorted(insert_size_optimal_params_collection[chrom].keys())
-            ]
-        ).to_csv(output_paths.insert_size_optimal_params, index=False)
-
-    # Save each of the correction factors and estimated biases
-    for insert_size_name, insert_size_factor_collection in [
-        (
-            "insert_size_noise_correction_factors",
-            insert_size_noise_correction_factors_collection,
-        ),
-        (
-            "insert_size_skewness_correction_factors",
-            insert_size_skewness_correction_factors_collection,
-        ),
-        (
-            "insert_size_mean_correction_factors",
-            insert_size_mean_correction_factors_collection,
-        ),
-        (
-            "insert_size_observed_bias",
-            insert_size_observed_bias_collection,
-        ),
-        (
-            "insert_size_target_bias",
-            insert_size_target_bias_collection,
-        ),
-    ]:
-        # Correction factors
-        all_insert_size_factors = np.vstack(
-            [
-                insert_size_factor_collection[chrom][band]
-                for chrom in chroms_ordered
-                for band in sorted(insert_size_factor_collection[chrom].keys())
-            ]
-        )
-        _path = getattr(output_paths, insert_size_name)
-        if _path is not None:
-            np.save(
-                _path,
-                all_insert_size_factors,
-            )
 
     # Write megabin centering/scaling parameters
     all_megabin_offset_combinations = pd.concat(
