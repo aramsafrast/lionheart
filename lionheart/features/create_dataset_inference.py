@@ -561,7 +561,7 @@ def create_dataset_for_inference(
             # Free up memory
             del (
                 sample_cov,
-                sample_insert_sizes,
+                #sample_insert_sizes,
                 sample_start_coordinates,
                 consensus_overlap,
                 consensus_overlap_indices,
