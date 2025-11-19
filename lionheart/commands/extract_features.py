@@ -79,7 +79,7 @@ def run_mosdepth(
             f"{n_jobs}",
             "--mapq",
             "20",
-            + (" --insert-size-mode" if insert_size_mode else ""),
+            " --insert-size-mode" if insert_size_mode else "",
             "--no-per-base",
             f"{out_dir / coverage_type}",  # Output prefix
             str(in_file),
